@@ -5,7 +5,7 @@ import uuid
 
 class CLIPAttentionExtractor:
     """
-    Extracts CLS-token attention → patches from any ViT‐based CLIP model.
+    Extracts CLS-token attention → patches from any ViT based CLIP model.
     """
     def __init__(self, model_name: str = "ViT-B/32", device="cuda"):
         self.device = device
@@ -51,8 +51,7 @@ class CLIPAttentionExtractor:
 
     # ---------- public API --------------------------------------------------
     @torch.no_grad()
-    def get_agg_attn(self, img: torch.Tensor,
-                    layer: int = -1, mode="mean") -> torch.Tensor:
+    def get_agg_attn(self, img: torch.Tensor, layer: int = -1, mode="mean") -> torch.Tensor:
         """
         Returns aggregated CLS→patch weights  [B, N].
         """
@@ -82,10 +81,6 @@ class CLIPAttentionExtractor:
         """
         Overlays attention heat-map on original image. img_tensor shape BxCxHxW.
         """
-        # if img_tensor.ndim==4: img_tensor = img_tensor[0]
-        # if w.ndim==2: w = w[0]
-        # grid = w.view(int(np.sqrt(self.N)), -1).cpu().numpy()
-        # # grid = cv2.resize(grid, (self.R, self.R))
         if img_tensor.ndim == 4:
             img_tensor = img_tensor[0]
         if w.ndim == 2:
@@ -95,7 +90,6 @@ class CLIPAttentionExtractor:
         expected_patches = self.N
         if w.numel() != expected_patches:
             print(f"Warning: Expected {expected_patches} patches, got {w.numel()}")
-            # Pad or truncate if necessary
             if w.numel() < expected_patches:
                 padding = torch.zeros(expected_patches - w.numel(), device=w.device)
                 w = torch.cat([w, padding])
@@ -104,7 +98,6 @@ class CLIPAttentionExtractor:
 
         grid_size = int(np.sqrt(expected_patches))
         grid = w.view(grid_size, grid_size).cpu().numpy()
-        #grid = (grid-grid.min())/(grid.max()-grid.min()+1e-6)
         heat = cv2.applyColorMap((grid*255).astype(np.uint8), cv2.COLORMAP_JET)
         heat = cv2.resize(heat, (self.R, self.R))
         im  = img_tensor.cpu().permute(1,2,0).numpy()
@@ -113,10 +106,6 @@ class CLIPAttentionExtractor:
         if save: 
             cv2.imwrite(save, out[:, :, ::-1])     # BGR→RGB
 
-
-        # save_path = Path(f"D:\\master\\summer 25\\subjects\\high-level computer vision\\test project\\overlay\\random_shit_{uuid.uuid4()}.png")
-        # save_path.parent.mkdir(parents=True, exist_ok=True)
-        # cv2.imwrite(str(save_path), out[:, :, ::-1])
         return out
 
     # ---------- patch feature extraction -----------------------------------
