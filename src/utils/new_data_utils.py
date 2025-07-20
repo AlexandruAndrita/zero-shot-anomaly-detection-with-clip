@@ -80,3 +80,19 @@ def mvtec_test_loader(root='data', split='test', batch_size=8):
     """Enhanced MVTec test loader with proper anomaly handling"""
     dataset = MVTecDataset(root, split, normal_transform)
     return DataLoader(dataset, batch_size=batch_size, shuffle=False)
+
+def load_random_images(folder: str, transform):
+    """
+    Load all images from `folder` without labels.
+    Returns list of (filename, tensor).
+    """
+    exts = ("*.png", "*.jpg", "*.jpeg", "*.bmp")
+    files = []
+    for ext in exts:
+        files.extend(glob.glob(os.path.join(folder, ext)))
+    images = []
+    for f in sorted(files):
+        img = Image.open(f).convert("RGB")
+        images.append((f, transform(img)))
+    return images
+
