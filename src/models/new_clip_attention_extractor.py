@@ -81,7 +81,7 @@ class CLIPAttentionExtractor:
         """
         Enhanced patch selection with adaptive thresholding
         """
-        attn_weights = self.get_agg_attn(img, mode="entropy_weighted")
+        attn_weights = self.get_agg_attn(img, mode="mean")
         
         # Adaptive k based on attention distribution
         attention_std = attn_weights.std(dim=1, keepdim=True)
@@ -89,12 +89,17 @@ class CLIPAttentionExtractor:
         
         # Select patches above mean + threshold * std
         adaptive_mask = attn_weights > (attention_mean + threshold * attention_std)
-        adaptive_k = min(k, adaptive_mask.sum(dim=1).max().item())
-        adaptive_k = max(adaptive_k, 5)  # Minimum 5 patches
+        
         
         # Get top-k indices
-        idx = attn_weights.topk(adaptive_k, dim=1).indices
-        
+        try:
+            adaptive_k = min(k, adaptive_mask.sum(dim=1).max().item())
+            adaptive_k = max(adaptive_k, 5)  # Minimum 5 patches
+            idx = attn_weights.topk(adaptive_k, dim=1).indices
+        except Exception as e:
+            print(f"Error occurred while getting top-k indices: {e}")
+            idx = torch.zeros((attn_weights.size(0), adaptive_k), device=attn_weights.device).long()
+
         return idx, attn_weights
     
     def topk_patches(self, img: torch.Tensor, k=10) -> Tuple[torch.Tensor, torch.Tensor]:

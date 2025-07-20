@@ -4,9 +4,12 @@ import numpy as np
 from sklearn import metrics
 import os
 import json
-from models.new_clip_attention_extractor import CLIPAttentionExtractor
+from torchvision import transforms
+import cv2
+# from models.new_clip_attention_extractor import CLIPAttentionExtractor
+from models.newest_clip_attention_extractor import CLIPAttentionExtractor
 from models.new_anomaly_detector import SelfSupervisedAttentionPatchAD
-from utils.new_data_utils import mvtec_train_loader, mvtec_test_loader
+from utils.new_data_utils import mvtec_train_loader, mvtec_test_loader, load_random_images
 
 # Configuration
 CONFIG = {
@@ -19,6 +22,26 @@ CONFIG = {
     "DATA_ROOT": "data"  # Update this to your MVTec dataset path
 }
 
+# TEST_CONFIG = {
+#     "RANDOM_DIR": "data/random_input",
+#     "OUTPUT_JSON": "overlay/random_results.json",
+#     "OUTPUT_HEATMAP_DIR": "overlay/heatmaps/",
+#     "MODEL_NAME": "ViT-B/32",
+#     "K": 25,
+#     "USE_ADAPTIVE": True,
+#     "CONTRASTIVE_WEIGHT": 0.3,
+#     "DEVICE": "cuda" if torch.cuda.is_available() else "cpu"
+# }
+
+
+transform = transforms.Compose([
+    transforms.Resize(224),
+    transforms.CenterCrop(224),
+    transforms.ToTensor(),
+    transforms.Normalize((0.4814, 0.4578, 0.4082),
+                        (0.2686, 0.2613, 0.2758))
+])
+
 def main():
     # Setup
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -30,7 +53,7 @@ def main():
     # Initialize models
     print("Initializing CLIP attention extractor...")
     extractor = CLIPAttentionExtractor(CONFIG["MODEL_NAME"], device)
-    
+
     print("Initializing self-supervised anomaly detector...")
     detector = SelfSupervisedAttentionPatchAD(
         extractor, 
@@ -144,3 +167,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
