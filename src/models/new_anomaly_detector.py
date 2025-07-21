@@ -4,6 +4,7 @@ import numpy as np
 # from .new_clip_attention_extractor import CLIPAttentionExtractor
 from .newest_clip_attention_extractor import CLIPAttentionExtractor
 from typing import Tuple, Optional
+import os
 
 class SelfSupervisedAttentionPatchAD:
     """
@@ -194,6 +195,29 @@ class SelfSupervisedAttentionPatchAD:
                       self.contrastive_weight * self_supervised_score
         
         return final_score.item(), attention_weights
+    
+    def save_state(self, path: str):
+        """
+        Save trained parameters (μ, sigma, memory bank) to disk.
+        """
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        torch.save({
+            'mu':      self.mu.cpu(),
+            'inv':     self.inv.cpu(),
+            'features': self.feature_memory.cpu(),
+            'attn':    self.attention_memory.cpu(),
+        }, path)
+
+    def load_state(self, path: str, device: str):
+        """
+        Load parameters from disk; moves tensors to device.
+        """
+        ckpt = torch.load(path, map_location='cpu')
+        self.mu               = ckpt['mu'].to(device)
+        self.inv              = ckpt['inv'].to(device)
+        self.feature_memory   = ckpt['features'].to(device)
+        self.attention_memory = ckpt['attn'].to(device)
+
 
 # Backward compatibility
 AttentionPatchAD = SelfSupervisedAttentionPatchAD
