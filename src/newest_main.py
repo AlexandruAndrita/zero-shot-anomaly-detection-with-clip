@@ -9,7 +9,7 @@ import cv2
 # from models.new_clip_attention_extractor import CLIPAttentionExtractor
 from models.newest_clip_attention_extractor import CLIPAttentionExtractor
 from models.newest_anomaly_detector import SelfSupervisedAttentionPatchAD
-from utils.new_data_utils import mvtec_train_loader, mvtec_test_loader, load_random_images
+from utils.new_data_utils import mvtec_train_loader, mvtec_test_loader
 
 # Configuration
 CONFIG = {
@@ -19,7 +19,7 @@ CONFIG = {
     "USE_ADAPTIVE": True,
     "CONTRASTIVE_WEIGHT": 0.3,
     "SAVE_VISUALIZATIONS": True,
-    "DATA_ROOT": "data"  # Update this to your MVTec dataset path
+    "DATA_ROOT": "new_folder"  # Update this to your MVTec dataset path
 }
 
 # TEST_CONFIG = {
@@ -188,7 +188,9 @@ import argparse
 def run_test_evaluation():
     results = run_evaluation_with_existing_model(
         # model_path="path/to/your/model.pth",
-        test_data_path="data/screw/test"
+        model_path="D:\\master\\summer 25\\subjects\\high-level computer vision\\zero-shot-anomaly-detection-with-clip\\saved_models\\feature_bank.pt",
+        #model_path="D:\\master\\summer 25\\subjects\\high-level computer vision\\zero-shot-anomaly-detection-with-clip\\saved_models\\self_supervised_ad.pth",
+        test_data_path="data/test"
     )
     return results
 
@@ -202,5 +204,5 @@ if __name__ == "__main__":
     if args.evaluate:
         run_test_evaluation()
     else:
-      main()
+        main()
 

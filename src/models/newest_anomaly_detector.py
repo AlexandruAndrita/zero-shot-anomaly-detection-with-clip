@@ -21,6 +21,7 @@ class SelfSupervisedAttentionPatchAD(nn.Module):
         
         # Statistical parameters for memory bank
         self.mu = None
+        self.mu_unit = None
         self.inv = None
         self.normal_features = []
         
@@ -140,6 +141,7 @@ class SelfSupervisedAttentionPatchAD(nn.Module):
         
         # Weighted mean and covariance
         self.mu = (all_features * weights).sum(0, keepdim=True)
+        self.mu_unit = F.normalize(self.mu.squeeze(0), dim=0).unsqueeze(0)
         
         # Compute weighted covariance matrix
         centered_features = all_features - self.mu
@@ -171,10 +173,20 @@ class SelfSupervisedAttentionPatchAD(nn.Module):
         patch_features = self.ext.img2patch_features(img)[0]  # [N, C]
         selected_features = patch_features[idx[0]]  # [k, C]
         
-        # Statistical anomaly score (Mahalanobis distance)
-        delta = selected_features - self.mu
-        mahal_distances = (delta @ self.inv * delta).sum(-1).sqrt()
-        statistical_score = mahal_distances.mean()
+        if self.mu_unit is None:
+            if self.feature_memory is not None and self.feature_memory.numel() > 0:
+                aw = self.attention_memory
+                if aw is None:
+                    aw = torch.ones(self.feature_memory.shape[0], device=self.feature_memory.device)
+                if aw.dim() > 1:
+                    aw = aw.squeeze()
+                w  = aw / (aw.sum() + 1e-8)
+                mu = (self.feature_memory * w.unsqueeze(1)).sum(0, keepdim=True)
+                self.mu_unit = F.normalize(mu, dim=1)
+            else:
+                self.mu_unit = F.normalize(selected_features.mean(0, keepdim=True), dim=1)
+        cos_sims = F.cosine_similarity(selected_features, self.mu_unit.expand_as(selected_features), dim=1)
+        statistical_score = (1.0 - cos_sims).mean()
         
         # Self-supervised anomaly score (Axis 3)
         # Compare with memory bank using attention-weighted similarity
@@ -199,16 +211,16 @@ class SelfSupervisedAttentionPatchAD(nn.Module):
         return final_score.item(), attention_weights
     
     def predict_anomaly_score(self, image_path):
-      """Predict anomaly score for an image file"""
-      image = self.load_and_preprocess_image(image_path)
-      features = self.extract_attention_guided_features(image)
-      score = self.compute_knn_anomaly_score(features)
-      return score
+        """Predict anomaly score for an image file"""
+        image = self.load_and_preprocess_image(image_path)
+        features = self.extract_attention_guided_features(image)
+        score = self.compute_knn_anomaly_score(features)
+        return score
 
     def extract_features(self, image):
-      """Extract features using CLIP attention mechanism"""
-      with torch.no_grad():
-        features = self.clip_attention_extractor.extract_patch_features(image)
+        """Extract features using CLIP attention mechanism"""
+        with torch.no_grad():
+            features = self.clip_attention_extractor.extract_patch_features(image)
         return features
 
 

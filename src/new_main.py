@@ -16,7 +16,7 @@ CONFIG = {
     "USE_ADAPTIVE": True,
     "CONTRASTIVE_WEIGHT": 0.3,
     "SAVE_VISUALIZATIONS": True,
-    "DATA_ROOT": "data"  # Update this to your MVTec dataset path
+    "DATA_ROOT": "new_folder"  # Update this to your MVTec dataset path
 }
 
 def main():

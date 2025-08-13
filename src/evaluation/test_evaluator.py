@@ -9,6 +9,9 @@ from pathlib import Path
 import shutil
 from typing import Dict, List, Tuple, Any
 import warnings
+
+from models.newest_anomaly_detector import SelfSupervisedAttentionPatchAD
+from models.newest_clip_attention_extractor import CLIPAttentionExtractor
 warnings.filterwarnings('ignore')
 
 # Core ML libraries
@@ -34,8 +37,15 @@ class ModelIntegrator:
         self.transform = self._get_transform()
         
         # These will be set based on your actual model implementation
-        self.feature_bank = None
-        self.attention_extractor = None
+        # self.feature_bank = None
+        self.attention_extractor = CLIPAttentionExtractor("ViT-B/32", device=self.device)
+        self.model = SelfSupervisedAttentionPatchAD(
+            extractor=self.attention_extractor,
+            k=25,
+            use_adaptive=True,
+            contrastive_weight=0.3
+        )
+        self._load_feature_bank()
         
     def _get_transform(self):
         """Standard CLIP preprocessing transforms"""
@@ -65,44 +75,115 @@ class ModelIntegrator:
         except Exception as e:
             print(f"Error loading model: {e}")
             # Initialize with default parameters
+
+    def _load_feature_bank(self):
+        """Load a feature bank / memory file in several possible formats."""
+        if not (self.model_path and os.path.exists(self.model_path)):
+            print("Feature bank not found or path invalid.")
+            return
+
+        obj = torch.load(self.model_path, map_location=self.device)
+
+        fb = None          # feature bank tensor
+        attn_mem = None    # attention weights tensor
+
+        # Case A: plain tensor saved
+        if isinstance(obj, torch.Tensor):
+            fb = obj.to(self.device)
+
+        # Case B: python dict with useful keys
+        elif isinstance(obj, dict):
+            # try common keys for feature bank
+            for k in ["feature_bank", "feature_memory", "features", "bank", "memory"]:
+                if k in obj and isinstance(obj[k], torch.Tensor):
+                    fb = obj[k].to(self.device)
+                    break
+            # optional attention weights
+            for k in ["attention_memory", "attn_memory", "weights", "attention_weights"]:
+                if k in obj:
+                    attn_mem = torch.as_tensor(obj[k], device=self.device, dtype=torch.float32)
+                    break
+
+            if fb is None:
+                # Looks like a model state_dict – not a feature bank
+                print("Loaded file looks like a model state_dict; no feature bank tensor found.")
+                return
+
+        else:
+            print(f"Unsupported feature bank format: {type(obj)}")
+            return
+
+        self.model.feature_bank = fb
+        self.model.feature_memory = fb
+        if attn_mem is None:
+            attn_mem = torch.ones(fb.shape[0], device=self.device)
+        self.model.attention_memory = attn_mem
+
+        fm = self.model.feature_memory                    # (N, D)
+        aw = self.model.attention_memory                  # (N,)
+
+        if aw is None:
+            aw = torch.ones(fm.shape[0], device=self.device)
+        if aw.dim() > 1:
+            aw = aw.squeeze()
+
+        w = aw / (aw.sum() + 1e-8)
+        mu = (fm * w.unsqueeze(1)).sum(0, keepdim=True)   # weighted mean
+        self.model.mu_unit = F.normalize(mu, dim=1)
+
+        print(f"Feature bank loaded. Shape: {tuple(fb.shape)}")
+
             
     def extract_attention_features(self, image_tensor):
         """
         Extract attention-guided features using your CLIP attention mechanism
         This should integrate with your clip_attention_extractor.py
         """
-        with torch.no_grad():
-            # Your attention extraction logic here
-            # This is a placeholder - replace with your actual implementation
-            features = torch.randn(512)  # Replace with actual feature extraction
-            return features
+        # with torch.no_grad():
+        #     # Your attention extraction logic here
+        #     # This is a placeholder - replace with your actual implementation
+        #     features = torch.randn(512)  # Replace with actual feature extraction
+        #     return features
+        patch_features = self.attention_extractor.img2patch_features(image_tensor)  # [1, N, C]
+        return patch_features[0]
     
+    # def compute_anomaly_score(self, image_path: str) -> float:
+    #     """
+    #     Compute anomaly score for a single image
+    #     Integrates with your k-NN based scoring from anomaly_detector.py
+    #     """
+    #     try:
+    #         # Load and preprocess image
+    #         image = Image.open(image_path).convert('RGB')
+    #         image_tensor = self.transform(image).unsqueeze(0).to(self.device)
+            
+    #         # Extract features using attention-guided approach (Axis 1)
+    #         features = self.extract_attention_features(image_tensor)
+            
+    #         # Compute k-NN distance to feature bank (Axis 3 - Self-supervised refining)
+    #         if self.feature_bank is not None:
+    #             distances = torch.cdist(features.unsqueeze(0), self.feature_bank)
+    #             # Use minimum distance or k-NN average as anomaly score
+    #             anomaly_score = torch.min(distances).item()
+    #         else:
+    #             # Fallback scoring method
+    #             anomaly_score = torch.norm(features).item()
+                
+    #         return anomaly_score
+            
+    #     except Exception as e:
+    #         print(f"Error processing {image_path}: {e}")
+    #         return 0.0
+
     def compute_anomaly_score(self, image_path: str) -> float:
-        """
-        Compute anomaly score for a single image
-        Integrates with your k-NN based scoring from anomaly_detector.py
-        """
         try:
-            # Load and preprocess image
             image = Image.open(image_path).convert('RGB')
             image_tensor = self.transform(image).unsqueeze(0).to(self.device)
-            
-            # Extract features using attention-guided approach (Axis 1)
-            features = self.extract_attention_features(image_tensor)
-            
-            # Compute k-NN distance to feature bank (Axis 3 - Self-supervised refining)
-            if self.feature_bank is not None:
-                distances = torch.cdist(features.unsqueeze(0), self.feature_bank)
-                # Use minimum distance or k-NN average as anomaly score
-                anomaly_score = torch.min(distances).item()
-            else:
-                # Fallback scoring method
-                anomaly_score = torch.norm(features).item()
-                
-            return anomaly_score
-            
+
+            score, _ = self.model.score(image_tensor)
+            return float(score)
         except Exception as e:
-            print(f"Error processing {image_path}: {e}")
+            print(f"Error computing anomaly score: {e}")
             return 0.0
 
 class TestEvaluator:
@@ -110,7 +191,7 @@ class TestEvaluator:
     Comprehensive test evaluation system for zero-shot anomaly detection
     """
     
-    def __init__(self, test_data_path: str, output_dir: str = "evaluation_results"):
+    def __init__(self, test_data_path: str, output_dir: str = "evaluation_results", threshold_method: str = "roc_youden"):
         self.test_data_path = Path(test_data_path)
         self.output_dir = Path(output_dir)
         self.timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -124,6 +205,7 @@ class TestEvaluator:
         # Results storage
         self.results = []
         self.model_integrator = None
+        self.threshold_method = threshold_method
         
     def setup_model(self, model_path: str = None):
         """Initialize and load the anomaly detection model"""
@@ -154,6 +236,44 @@ class TestEvaluator:
         
         return test_images
     
+    def _compute_threshold(self, scores: List[float], true_labels: List[int] | None) -> float:
+        s = np.asarray(scores, dtype=float)
+
+        # If method needs labels but we don't have a mix of classes, fall back to Otsu
+        need_labels = self.threshold_method in {"roc_youden", "f1"}
+        have_labels = true_labels is not None and len(set(true_labels)) > 1
+
+        method = self.threshold_method
+        if need_labels and not have_labels:
+            method = "otsu"
+
+        if method == "roc_youden":
+            fpr, tpr, thr = roc_curve(true_labels, s)
+            j = tpr - fpr
+            best = np.argmax(j)
+            # Note: sklearn returns thr aligned with fpr/tpr; pick the corresponding value
+            return float(thr[best])
+
+        if method == "f1":
+            precision, recall, thr = precision_recall_curve(true_labels, s)
+            # thresholds has len = len(precision) - 1
+            f1 = 2 * precision[:-1] * recall[:-1] / (precision[:-1] + recall[:-1] + 1e-8)
+            best = int(np.argmax(f1))
+            return float(thr[best])
+
+        # Otsu (unsupervised)
+        hist, bin_edges = np.histogram(s, bins=256)
+        hist = hist.astype(float)
+        prob = hist / (hist.sum() + 1e-12)
+        cum_prob = np.cumsum(prob)
+        cum_mean = np.cumsum(prob * (bin_edges[:-1] + bin_edges[1:]) / 2.0)
+        global_mean = cum_mean[-1]
+
+        between = (global_mean * cum_prob - cum_mean) ** 2 / (cum_prob * (1.0 - cum_prob) + 1e-12)
+        idx = int(np.nanargmax(between))
+        # threshold at the bin edge (midpoint between edges is also fine)
+        return float(bin_edges[idx])
+    
     def predict_batch(self, image_paths: List[Path], true_labels: List[int]) -> Tuple[List[float], List[int]]:
         """
         Predict anomaly scores for a batch of images
@@ -166,13 +286,12 @@ class TestEvaluator:
             scores.append(score)
             
         # Convert scores to binary predictions (you may need to adjust threshold)
-        threshold = np.median(scores)  # Simple threshold - can be optimized
+        threshold = self._compute_threshold(scores, true_labels)
         predictions = [1 if score > threshold else 0 for score in scores]
         
         return scores, predictions
     
-    def calculate_metrics(self, y_true: List[int], y_pred: List[int], 
-                         y_scores: List[float]) -> Dict[str, float]:
+    def calculate_metrics(self, y_true: List[int], y_pred: List[int], y_scores: List[float]) -> Dict[str, float]:
         """Calculate comprehensive evaluation metrics"""
         
         metrics = {}
@@ -205,7 +324,7 @@ class TestEvaluator:
         return metrics
     
     def create_visual_comparison(self, image_paths: List[Path], 
-                               true_labels: List[int], pred_labels: List[int]):
+                            true_labels: List[int], pred_labels: List[int]):
         """
         Create organized visual comparison folders
         """
@@ -431,12 +550,14 @@ This evaluation framework integrates with your existing CLIP-based anomaly detec
         }
 
 def run_evaluation_with_existing_model(model_path: str = None, 
-                                     test_data_path: str = "data/test",
-                                     output_dir: str = "evaluation_results"):
+                                    test_data_path: str = "data/test",
+                                    output_dir: str = "evaluation_results"):
     """
     Convenience function to run evaluation with existing model
     """
     evaluator = TestEvaluator(test_data_path, output_dir)
+    # evaluator = TestEvaluator(test_data_path, output_dir, threshold_method="f1")
+    # evaluator = TestEvaluator(test_data_path, output_dir, threshold_method="otsu")
     evaluator.setup_model(model_path)
     return evaluator.run_evaluation()
 
