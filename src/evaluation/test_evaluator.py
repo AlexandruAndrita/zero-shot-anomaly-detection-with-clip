@@ -286,6 +286,7 @@ class TestEvaluator:
             scores.append(score)
             
         # Convert scores to binary predictions (you may need to adjust threshold)
+        # threshold = np.median(scores)
         threshold = self._compute_threshold(scores, true_labels)
         predictions = [1 if score > threshold else 0 for score in scores]
         
