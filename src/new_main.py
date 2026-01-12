@@ -4,22 +4,78 @@ import numpy as np
 from sklearn import metrics
 import os
 import json
-from models.new_clip_attention_extractor import CLIPAttentionExtractor
+from torchvision import transforms
+import sys
+import cv2
+# from models.new_clip_attention_extractor import CLIPAttentionExtractor
+from models.newest_clip_attention_extractor import CLIPAttentionExtractor
 from models.new_anomaly_detector import SelfSupervisedAttentionPatchAD
-from utils.new_data_utils import mvtec_train_loader, mvtec_test_loader
+from utils.new_data_utils import mvtec_train_loader, mvtec_test_loader, mvtec_random_images_loader
 
 # Configuration
+# CONFIG = {
+#     "PATH": "overlay/",
+#     "MODEL_NAME": "ViT-B/32", 
+#     "K": 25,
+#     "USE_ADAPTIVE": True,
+#     "CONTRASTIVE_WEIGHT": 0.3,
+#     "SAVE_VISUALIZATIONS": True,
+#     "DATA_ROOT": "data"  # Update this to your MVTec dataset path
+# }
+
 CONFIG = {
-    "PATH": "overlay/",
-    "MODEL_NAME": "ViT-B/32", 
-    "K": 25,
-    "USE_ADAPTIVE": True,
+    "DATA_ROOT":      "data",
+    "MODEL_NAME":     "ViT-B/32",
+    "K":              25,
+    "USE_ADAPTIVE":   True,
     "CONTRASTIVE_WEIGHT": 0.3,
+    "DEVICE":         "cuda" if torch.cuda.is_available() else "cpu",
+    "STATE_PATH":     "overlay/state.pth",
+    "RESULTS_PATH":   "overlay/results.json",
+    "HEATMAP_DIR":    "overlay/heatmaps/",
+    "PATH":           "overlay/",
     "SAVE_VISUALIZATIONS": True,
-    "DATA_ROOT": "data"  # Update this to your MVTec dataset path
+    "RANDOM_IMAGES_PATH": "data/random_images/"
 }
 
-def main():
+transform = transforms.Compose([
+    transforms.Resize(224),
+    transforms.CenterCrop(224),
+    transforms.ToTensor(),
+    transforms.Normalize((0.4814, 0.4578, 0.4082),
+                        (0.2686, 0.2613, 0.2758))
+])
+
+def compute_threshold(detector, test_loader, device):
+    # Compute a threshold based on training distribution (e.g., mean + 3*std of Mahalanobis on normals)
+    # Here we use the stored μ and inverse covariance to set a score threshold
+    if hasattr(detector, "mu") and hasattr(detector, "inv"):
+        # Sample a few normal scores to estimate threshold
+        normal_scores = []
+        for i, img_batch in enumerate(test_loader):
+            print("Index when calculating threshold:", i)
+            if i >= 10:
+                break
+            for img in img_batch:
+                img = img.to(device)
+                img = img.unsqueeze(0)  # Add batch dimension
+                s, _ = detector.score(img)
+                normal_scores.append(s)
+            mean_ns = sum(normal_scores) / len(normal_scores)
+            std_ns = (sum((x - mean_ns) ** 2 for x in normal_scores) / len(normal_scores)) ** 0.5
+            threshold = mean_ns + 3 * std_ns
+    else:
+        threshold = 1.0  # fallback
+
+    for score in normal_scores:
+        if score > threshold:
+            print("anomaly")
+        else:
+            print("normal")
+
+    return threshold
+
+def train_save():
     # Setup
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Using device: {device}")
@@ -30,7 +86,7 @@ def main():
     # Initialize models
     print("Initializing CLIP attention extractor...")
     extractor = CLIPAttentionExtractor(CONFIG["MODEL_NAME"], device)
-    
+
     print("Initializing self-supervised anomaly detector...")
     detector = SelfSupervisedAttentionPatchAD(
         extractor, 
@@ -142,5 +198,55 @@ def main():
     print(f"Visualizations saved to {CONFIG['PATH']}")
     print("\nTraining and evaluation completed successfully!")
 
+    detector.save_state(CONFIG["STATE_PATH"])
+
+    print("Model state saved successfully")
+
+def load_and_test():
+    device = CONFIG["DEVICE"]
+    extractor = CLIPAttentionExtractor(CONFIG["MODEL_NAME"], device)
+    detector  = SelfSupervisedAttentionPatchAD(
+                    extractor,
+                    k=CONFIG["K"],
+                    use_adaptive=CONFIG["USE_ADAPTIVE"],
+                    contrastive_weight=CONFIG["CONTRASTIVE_WEIGHT"])
+    detector.load_state(CONFIG["STATE_PATH"], device)
+    os.makedirs(CONFIG["HEATMAP_DIR"], exist_ok=True)
+
+    test_loader = mvtec_random_images_loader(CONFIG["DATA_ROOT"], split='random_images')
+    threshold = compute_threshold(detector, test_loader, device)
+    anomaly_results = []
+    # for _, img in enumerate(tqdm.tqdm(test_loader)):
+    #     img = img.to(device)
+    #     s, attn = detector.score(img)
+    #     is_anomaly = "anomaly" if s > threshold else "normal"
+    #     print("Score:", s, "Threshold:", threshold, "Label:", is_anomaly)
+        #anomaly_results.append((is_anomaly))
+
+    # metrics
+    # binary = [1 if l>0 else 0 for l in labels]
+    # auroc = metrics.roc_auc_score(binary, scores) if len(set(binary))>1 else 0.0
+    # fpr, tpr, thr = metrics.roc_curve(binary, scores)
+    # opt = thr[np.argmax(tpr-fpr)]
+    # preds = [1 if s>opt else 0 for s in scores]
+    # results = {
+    #     "auroc": auroc, "accuracy": metrics.accuracy_score(binary,preds),
+    #     "precision": metrics.precision_score(binary,preds,zero_division=0),
+    #     "recall": metrics.recall_score(binary,preds,zero_division=0),
+    #     "f1": metrics.f1_score(binary,preds,zero_division=0),
+    #     "threshold": opt
+    # }
+    # results = {
+    #     "images": anomaly_results
+    # }
+    # with open(CONFIG["RESULTS_PATH"], "w") as f:
+    #     json.dump(results, f, indent=2)
+    # print(f"Test complete. Results saved to {CONFIG['RESULTS_PATH']}")
+
 if __name__ == "__main__":
-    main()
+    load_and_test()
+    # if len(sys.argv)>1 and sys.argv[1]=="test":
+    #     load_and_test()
+    # else:
+    #     train_save()
+

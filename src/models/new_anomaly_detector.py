@@ -1,8 +1,10 @@
 import torch
 import torch.nn.functional as F
 import numpy as np
-from .new_clip_attention_extractor import CLIPAttentionExtractor
+# from .new_clip_attention_extractor import CLIPAttentionExtractor
+from .newest_clip_attention_extractor import CLIPAttentionExtractor
 from typing import Tuple, Optional
+import os
 
 class SelfSupervisedAttentionPatchAD:
     """
@@ -10,7 +12,7 @@ class SelfSupervisedAttentionPatchAD:
     Implements Axis 1 (Attention-Guided) + Axis 3 (Self-supervised)
     """
     def __init__(self, extractor: CLIPAttentionExtractor, k=25, use_adaptive=True, 
-                 contrastive_weight=0.3):
+                contrastive_weight=0.3):
         self.ext = extractor
         self.k = k
         self.use_adaptive = use_adaptive
@@ -40,7 +42,7 @@ class SelfSupervisedAttentionPatchAD:
             attn = attention_weights[b]  # [N]
             
             # Get top attended patches as anchors
-            top_indices = attn.topk(min(10, num_patches)).indices
+            top_indices = attn.topk(min(attn.size(0), num_patches)).indices
             
             # Create positive pairs (spatially close patches)
             for i in range(len(top_indices)):
@@ -123,8 +125,13 @@ class SelfSupervisedAttentionPatchAD:
         all_attention_weights = torch.cat(all_attention_weights, 0)  # [M]
         
         print(f"Total features collected: {all_features.shape[0]}")
-        print(f"Average contrastive loss: {np.mean(contrastive_losses) if contrastive_losses else 0:.4f}")
-        
+        tmp_list = []
+        if contrastive_losses:
+            tmp_list = np.array([item.item() for item in contrastive_losses])
+            print(f"Average contrastive loss: {np.mean(tmp_list)}")
+        else:
+            print("Average contrastive loss: 0.0 (no losses computed)")
+
         # Create attention-weighted statistics (Axis 3: Self-supervised)
         # Weight features by attention importance
         attention_weights_norm = all_attention_weights / (all_attention_weights.sum() + 1e-8)
@@ -188,6 +195,29 @@ class SelfSupervisedAttentionPatchAD:
                       self.contrastive_weight * self_supervised_score
         
         return final_score.item(), attention_weights
+    
+    def save_state(self, path: str):
+        """
+        Save trained parameters (μ, sigma, memory bank) to disk.
+        """
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        torch.save({
+            'mu':      self.mu.cpu(),
+            'inv':     self.inv.cpu(),
+            'features': self.feature_memory.cpu(),
+            'attn':    self.attention_memory.cpu(),
+        }, path)
+
+    def load_state(self, path: str, device: str):
+        """
+        Load parameters from disk; moves tensors to device.
+        """
+        ckpt = torch.load(path, map_location='cpu')
+        self.mu               = ckpt['mu'].to(device)
+        self.inv              = ckpt['inv'].to(device)
+        self.feature_memory   = ckpt['features'].to(device)
+        self.attention_memory = ckpt['attn'].to(device)
+
 
 # Backward compatibility
 AttentionPatchAD = SelfSupervisedAttentionPatchAD
